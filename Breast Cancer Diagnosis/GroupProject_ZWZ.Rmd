@@ -1,0 +1,284 @@
+---
+title: "Breast Cancer Diagnosis - Group ZWZ"
+author: 
+- Stacey Zhang (qinxiao2)
+- Doris Wang (zhuoyun2)
+- Yankun Zhao (yankunz2)
+date: "2019/12/14"
+output: 
+  html_document:
+    theme: readable
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, fig.align = "center")
+```
+
+```{r libraries, message = FALSE}
+library("tidyverse")
+library("readr")
+library("randomForest")
+library("caret")
+library("kableExtra")
+library("gridExtra")
+```
+
+***
+
+## Abstract 
+
+> Statistical learning methods were applied to characteristic data of patients' cell nuclei to predict the severity of breast cancer. A variety of learning techniques were explored and validated. The random forest model shows promise but limitations apply and thus further data collection and analysis is recommended. 
+
+***
+
+# Introduction 
+
+Breast cancer is cancer that develops from breast tissue, which signs may include a lump in the breast, a change in breast shape, dimpling of the skin, and etc[^1]. Risk factors for developing breast cancer include being female, obesity, lack of physical exercise, drinking alcohol, having children late and what not. In the United States, breast cancer is most commonly diagnosed in women after skin cancer. Globally, survival rates in developed nations are high (80-90%), while survival rates in developing nations are poorer. Therefore, being able to determine the cancer status is essential. 
+
+In this study, we are going to apply statistical learning techniques to a dataset of the results from digitized image of fine needle aspirate (FNA) of a breast mass for each breast patient seen by Dr. Wolberg from 1984 to 1991. The goal of this model would be to perform breast cancer detection based on the properties of the patients' cell nuclei. The results show potential for doctors to make better medical decisions and to offer more effective treatments.
+
+***
+
+# Methods
+
+## Data
+
+```{r data read-in, message=FALSE}
+breast = read_csv("http://archive.ics.uci.edu/ml/machine-learning-databases/breast-cancer-wisconsin/wdbc.data", 
+    col_names = FALSE, trim_ws = FALSE)
+colnames(breast) = c("id", "diagnosis", "radius_mean", "texture_mean", "perimeter_mean", "area_mean", "smoothness_mean",
+                     "compactness_mean", "concavity_mean", "concave_points_mean", "symmetry_mean", "fractal_dimension_mean",
+                     "radius_se", "texture_se", "perimeter_se", "area_se", "smoothness_se", "compactness_se", "concavity_se",
+                     "concave_points_se", "symmetry_se", "fractal_dimension_se", "radius_worst", "texture_worst", 
+                     "perimeter_worst","area_worst", "smoothness_worst", "compactness_worst", "concavity_worst", "concave_points_worst",
+                     "symmetry_worst", "fractal_dimension_worst")
+breast$diagnosis = factor(breast$diagnosis)
+```
+
+```{r data-splitting} 
+set.seed(123)
+idx = sample(nrow(breast), size = 0.8 * nrow(breast))
+breast_trn = breast[idx, ]
+breast_tst = breast[-idx, ]
+idx2 = sample(nrow(breast_trn),size = 0.8 * nrow(breast_trn))
+breast_est = breast_trn[idx2, ]
+breast_val = breast_trn[-idx2, ]
+```
+
+The breast cancer dataset originated from UCI Machine Learning Repository[^2] and was accessed through kaggle[^3]. Observations were collected from 569 breast cancer patients seen by Dr. Wolberg from 1984 to 1991. Variables include patient ID, the diagnosis, and characteristics of the cell nuclei present in the digitized images of a breast mass. 
+
+The response variable `diagnosis` is character and has two levels: `B` as benign and `M` as malignant. In particular, benign breast conditions are unusual growths or other changes in the breast tissue that are not cancer [^4], while malignant tumors are cancerous and aggressive because they invade and damage surrounding tissue [^5]. 
+
+Each of the characteristic features of the patients' cell nuclei has the mean, standard error, and the "worst" or largest value (mean of the three largest values), resulting in 30 explanatory variables.  
+
+Datailed variable descriptions and some exploratory data analysis can be found in the appendix. 
+
+## Modeling  
+
+In order to predict the severity of breast cancer, several binary classification strategies were explored. The training dataset is random subset of the original dataset with 80% of total observations and the test dataset has the remaining 20% observations. Then a random subset of the training dataset which includes 80% of its observastions is taken as the estimation dataset and the remaining as the validation dataset.
+
+We mainly focused on three types of models with different predictors. For each modeling technique listed below, we trained a model using the "worst" predictors (the mean of the three largest values for cell nuclei characteristics) and another one using only "mean" predictors (mean values for cell nuclei characteristics).   
+Three modeling strategies were considered:  
+
+-  Random Forests, through the use `randomForest` package. A broad range of the tuning parameter `mtry` was tried and compared with the ones giving the lowest validation misclassification rates were selected; the tuning parameter `ntree` was set at `ntree` = 500
+-  K Nearest Neighbors, through the built-in R functionality. A broad range of the tuning parameter `k` was tried and compared with the ones giving the lowest validation misclassification rates were selected.   
+-  Logistic Regression, through the built-in R functionality. 
+
+```{r}
+misclass_all = rep(0, 6)
+```
+
+```{r}
+# Random forest models with 'mean' predictors
+mtry = seq(1, 10, 1)
+rf_misclass = c()
+set.seed(1)
+for (k in 1 : length(mtry)) {
+  fit = randomForest(diagnosis ~ radius_mean + texture_mean + perimeter_mean + area_mean + smoothness_mean + compactness_mean + concavity_mean + concave_points_mean + symmetry_mean + fractal_dimension_mean, data = breast_est, mtry = mtry[k], ntree = 500)
+  pred = predict(fit, breast_val)
+  rf_misclass[k] = mean(breast_val$diagnosis != pred)
+}
+
+misclass_all[1] = min(rf_misclass)
+```
+
+```{r}
+# Random forest models with 'worst' predictors
+mtry = seq(1, 10, 1)
+rf_misclass2 = c()
+set.seed(2)
+for (k in 1:10) {
+  fit = randomForest(diagnosis ~ radius_worst + texture_worst + perimeter_worst + area_worst + smoothness_worst + compactness_worst + concavity_worst + concave_points_worst + symmetry_worst + fractal_dimension_worst,
+                     data = breast_est, 
+                     mtry = k, 
+                     ntree = 500)
+  pred = predict(fit, breast_val)
+  rf_misclass2[k] = mean(breast_val$diagnosis != pred)
+}
+
+misclass_all[2] = min(rf_misclass2)
+```
+
+```{r}
+# KNN models with 'mean' parameters
+set.seed(2)
+k = 1:15
+knn_misclass = c()
+for(i in k){
+  fit = knn3(diagnosis ~ radius_mean + texture_mean + perimeter_mean + area_mean + smoothness_mean + 
+             compactness_mean + concavity_mean + concave_points_mean + symmetry_mean + fractal_dimension_mean, 
+                      data = breast_est, k = i)
+  pred = predict(fit, breast_val, type = "class")
+  knn_misclass[i] = mean(breast_val$diagnosis != pred)
+}
+
+misclass_all[3] = min(knn_misclass)
+```
+
+```{r}
+# KNN models with 'worst' predictors
+set.seed(2)
+k = 1:15
+knn_misclass2 = c()
+for(i in k){
+  fit = knn3(diagnosis ~ radius_worst + texture_worst + perimeter_worst + area_worst + smoothness_worst + compactness_worst + concavity_worst + concave_points_worst + symmetry_worst + fractal_dimension_worst, data = breast_est, k = i)
+  pred = predict(fit, breast_val, type = "class")
+  knn_misclass2[i] = mean(breast_val$diagnosis != pred)
+}
+misclass_all[4] = min(knn_misclass2)
+```
+
+```{r, warning = FALSE}
+# GLM models with 'mean' predictors
+set.seed(1)
+glm_fit = glm(diagnosis ~ radius_mean + texture_mean + perimeter_mean + area_mean + smoothness_mean + 
+             compactness_mean + concavity_mean + concave_points_mean + symmetry_mean + fractal_dimension_mean, data = breast_est, family = "binomial")
+pred = ifelse(predict(glm_fit, breast_val) > 0.5, 'M', 'B')
+glm_misclass = mean(breast_val$diagnosis != pred)
+misclass_all[5] = glm_misclass
+```
+
+```{r, warning = FALSE}
+# GLM models with 'worst' predictors
+set.seed(1)
+glm_fit2 = glm(diagnosis ~ radius_worst + texture_worst + perimeter_worst + area_worst + smoothness_worst + compactness_worst + concavity_worst + concave_points_worst + symmetry_worst + fractal_dimension_worst, data = breast_est, family = "binomial")
+pred2 = ifelse(predict(glm_fit2, breast_val) > 0.5, 'M', 'B')
+glm_misclass2 = mean(breast_val$diagnosis != pred2)
+misclass_all[6] = glm_misclass2
+```
+
+## Evaluation
+
+Models were ultimately evaluated based on their ability to simply predict the severity of breast cancer. For each of the modeling methods talked above, the model with the tuning parameter that gives the lowest validation misclassification rate was considered as the best model of that method and compared to other models selected. For the random forest models, the one using "mean" predictors with the tuning parameter `mtry` = 1 and the one using "worst" predictors with `mtry` = 2 were selected as the best for this modeling technique; For the k nearest neighbors models, the one using "mean" predictors with the tuning parameter `k` = 4 and the one using "worst" predictors with `k` = 13 were selected. The validation misclassfication rates of these selected model were then compared to those of the logistic regression models. 
+
+The model with the overall lowest validation misclassfication rate among the six resulting "best" models was chosen with its performance on the hold-out test dataset evaluated. 
+
+***
+
+# Results
+
+The table below shows performance across the three modeling techniques considered. Among the six types of models we applied, we would like to choose our Best Random Forest Model with 'Mean' Predictors as our "best" model. The model uses the mean values of all available characteristic features of the patients' cell nuclei (radius, texture, perimeter, area, smoothness, compactness, concavity, concave points, symmetry, and fractal dimension) and uses 1 as the number of variables available for splitting at each tree node and 500 as the number of trees.  
+
+```{r}
+models = c("Best Random Forest Model with 'Mean' Predictors", "Best Random Forest Model with 'Worst' Predictors", "Best KNN Model with 'Mean' Predictors", "Best KNN Model with 'Worst' Predictors", "Logistic Regression Model with 'Mean' Predictors", "Logistic Regression Model with 'Worst' Predictors")
+results = tibble(Models = models, 'Validation Misclassification Rate' = lapply(misclass_all, round, 3))
+kable(results) %>% 
+  kable_styling(bootstrap_options = "striped", full_width = F)
+```
+
+The test misclassification rate for this model is computed and shown in the discussion section below.   
+
+*** 
+
+# Discussion  
+
+```{r}
+set.seed(1)
+bst = randomForest(diagnosis ~ radius_mean + texture_mean + perimeter_mean + area_mean + smoothness_mean + 
+             compactness_mean + concavity_mean + concave_points_mean + symmetry_mean + fractal_dimension_mean, data = breast_trn, mtry = 1, ntree = 500)
+tst_mis = mean(predict(bst, breast_tst) != breast_tst$diagnosis)
+model = c("Best Random Forest Model with 'Mean' Predictors")
+results = tibble(Model = model, 'Test Misclassification Rate' = round(tst_mis, 3))
+kable(results) %>% 
+  kable_styling(bootstrap_options = "striped", full_width = F)
+```
+
+Since our final model has a fairly high accuracy (low misclassification rate) for predicting the diagnosis result given data related to cell nuclei present in the digitized images of a breast mass, we conclude that it is possible to use this model to help doctors improve the efficiency of the diagnosis process for breast cancer. Doctors may use our model to re-assure that the diagnosis he or she is giving is correct, which can minimize the possibility of misdiagnosis of breast cancer.  
+
+Moreover, since our model solely used information obtainable from digitized images of a breast mass for patients, it may also potentially enable the patients to diagnose themselves based on their digitized images of a breast mass without having to wait on an official appointment with a doctor. This can greatly improve the efficiency of the diagnosis process for patients, help patients get appropriate treatments quickly and save more resources. 
+
+However, before we can apply this model into actual industry, we need to first admit and resolve the limitations of this analysis. The main problem is that the dataset is not effectively large. In order to improve our model, we need to train on larger datasets containing more patients. The other limitation is that this dataset only contains patients who visited Dr. Wolberg and recorded his diagnosis results. It would be much better if we could get data from more doctors and potentially from different places to ensure that the model can be generalized without losing reliability.     
+
+***
+
+# Appendix
+
+## Data Dictionary
+- `radius` - mean of distances from center to points on the perimeter
+- `texture` - standard deviation of gray-scale values
+- `perimeter`
+- `area`
+- `smoothness` - local variation in radius lengths
+- `compactness` - (perimeter^2 / area - 1.0)
+- `concavity` - severity of concave portions of the contour
+- `concave points` - number of concave portions of the contour
+- `symmetry`
+- `fractal dimension` - ("coastline approximation" - 1)
+
+See the documentation on the [UCI website](https://archive.ics.uci.edu/ml/datasets/Breast+Cancer+Wisconsin+(Diagnostic)) for additional information. 
+
+## EDA
+```{r, message = FALSE}
+p1 = ggplot(data = breast, aes(x = diagnosis, fill = diagnosis)) +
+  geom_bar(stat = "count") +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), axis.line = element_line(colour = "black"), axis.text.x = element_text(angle = 45, hjust = 1))
+
+p2 = ggplot(breast, aes(x = radius_mean, color = diagnosis)) +
+  geom_density() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), axis.line = element_line(colour = "black"), axis.text.x = element_text(angle = 45, hjust = 1))
+
+p3 = ggplot(breast, aes(x = texture_mean, color = diagnosis)) +
+  geom_density() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), axis.line = element_line(colour = "black"), axis.text.x = element_text(angle = 45, hjust = 1))
+
+p4 = ggplot(breast, aes(x = perimeter_mean, color = diagnosis)) +
+  geom_density() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), axis.line = element_line(colour = "black"), axis.text.x = element_text(angle = 45, hjust = 1))
+
+p5 = ggplot(breast, aes(x = area_mean, color = diagnosis)) +
+  geom_density() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), axis.line = element_line(colour = "black"), axis.text.x = element_text(angle = 45, hjust = 1))
+
+p6 = ggplot(breast, aes(x = smoothness_mean, color = diagnosis)) +
+  geom_density() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), axis.line = element_line(colour = "black"), axis.text.x = element_text(angle = 45, hjust = 1))
+
+p7 = ggplot(breast, aes(x = compactness_mean, color = diagnosis)) +
+  geom_density() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), axis.line = element_line(colour = "black"), axis.text.x = element_text(angle = 45, hjust = 1))
+
+p8 = ggplot(breast, aes(x = concavity_mean, color = diagnosis)) +
+  geom_density() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), axis.line = element_line(colour = "black"), axis.text.x = element_text(angle = 45, hjust = 1))
+
+p9 = ggplot(breast, aes(x = concave_points_mean, color = diagnosis)) +
+  geom_density() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), axis.line = element_line(colour = "black"), axis.text.x = element_text(angle = 45, hjust = 1))
+
+p10 = ggplot(breast, aes(x = symmetry_mean, color = diagnosis)) +
+  geom_density() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), axis.line = element_line(colour = "black"), axis.text.x = element_text(angle = 45, hjust = 1))
+
+p11 = ggplot(breast, aes(x = fractal_dimension_mean, color = diagnosis)) +
+  geom_density() +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), axis.line = element_line(colour = "black"), axis.text.x = element_text(angle = 45, hjust = 1))
+
+grid.arrange(p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, nrow = 4, ncol = 3)
+```
+
+
+[^1]: [Wikipedia: Breast cancer](https://en.wikipedia.org/wiki/Breast_cancer)
+[^2]: [UCI Machine Learning Repository](https://archive.ics.uci.edu/ml/datasets/breast+cancer+wisconsin+(original))
+[^3]: [Kaggle](https://www.kaggle.com/sarahvch/breast-cancer-wisconsin-prognostic-data-set)
+[^4]: [Benign Breast Conditions](https://www.breastcancer.org/symptoms/benign)
+[^5]: [Malignant Breast Conditions](https://www.nationalbreastcancer.org/breast-tumors/)
